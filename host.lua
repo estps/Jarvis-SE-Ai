@@ -113,13 +113,13 @@ G["?"] = rows({".###.", "#...#", "...#.", "..#..", "..#..", ".....", "..#.."})
 
 local P = {
     bg = 16, panel = 17, head = 18, bd = 19, white = 20, dim = 21,
-    accent = 22, ai = 23, sys = 24, ok = 25, err = 26, input = 27, inbd = 28, cur = 29
+    accent = 22, ai = 23, sys = 24, ok = 25, err = 26, input = 27, inbd = 28, cur = 29, warn = 30
 }
 local PAL = {
     {16, 24, 32, 54}, {17, 26, 36, 62}, {18, 40, 56, 90}, {19, 58, 84, 130},
     {20, 224, 234, 248}, {21, 126, 146, 180}, {22, 50, 224, 255}, {23, 170, 234, 255},
     {24, 132, 152, 186}, {25, 72, 226, 146}, {26, 255, 96, 108}, {27, 26, 36, 58},
-    {28, 66, 96, 148}, {29, 50, 224, 255}
+    {28, 66, 96, 148}, {29, 50, 224, 255}, {30, 255, 210, 80}
 }
 
 local dbgOn = true
@@ -128,10 +128,11 @@ local evP1 = ""
 local evP2 = ""
 
 local function dbg(...)
+    local args = { ... }
     pcall(function()
         local f = fs.open("/dbg.txt", "a")
         if f then
-            f.write(os.clock() .. " " .. table.concat({ ... }, " ") .. "\n")
+            f.write(os.clock() .. " " .. table.concat(args, " ") .. "\n")
             f.close()
         end
     end)
@@ -168,7 +169,7 @@ local function rect(x, y, w, h, c)
 end
 
 local function textRow(g, r, fg, bg)
-    local row = G[g] and G[g][r] or G["?"][r]
+    local row = g[r] or G["?"][r]
     local t = {}
     for i = 1, 5 do
         t[i] = row:sub(i, i) == "#" and fg or bg
@@ -201,7 +202,8 @@ local VIS = 16
 local function wrap(text, lim)
     local out = {}
     local cur = ""
-    for w in (text .. " "):gmatch("%S+") do
+    for _word in (text .. " "):gmatch("%S+") do
+        local w = _word
         if #cur + #w + 1 > lim then
             if cur ~= "" then
                 table.insert(out, cur:sub(1, -2))
