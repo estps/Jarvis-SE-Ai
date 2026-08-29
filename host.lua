@@ -116,10 +116,10 @@ local P = {
     accent = 22, ai = 23, sys = 24, ok = 25, err = 26, input = 27, inbd = 28, cur = 29
 }
 local PAL = {
-    {16, 11, 14, 22}, {17, 17, 24, 39}, {18, 21, 30, 51}, {19, 36, 52, 84},
-    {20, 220, 233, 247}, {21, 94, 113, 145}, {22, 50, 224, 255}, {23, 168, 232, 255},
-    {24, 122, 141, 176}, {25, 59, 224, 139}, {26, 255, 92, 104}, {27, 13, 20, 36},
-    {28, 44, 69, 112}, {29, 50, 224, 255}
+    {16, 24, 32, 54}, {17, 26, 36, 62}, {18, 40, 56, 90}, {19, 58, 84, 130},
+    {20, 224, 234, 248}, {21, 126, 146, 180}, {22, 50, 224, 255}, {23, 170, 234, 255},
+    {24, 132, 152, 186}, {25, 72, 226, 146}, {26, 255, 96, 108}, {27, 26, 36, 58},
+    {28, 66, 96, 148}, {29, 50, 224, 255}
 }
 
 local dbgOn = true
@@ -134,6 +134,8 @@ local function dbg(...)
         f.close()
     end
 end
+
+dbg("script start")
 
 local function bytesStr(s)
     local t = {}
@@ -420,17 +422,53 @@ local function handleSubmit(txt)
     end
 end
 
+local running = true
+local timer = -1
+
+local function dispatch(ev)
+    if ev[1] == "timer" and ev[2] == timer then
+        timer = os.startTimer(0.35)
+    elseif ev[1] == "terminate" then
+        running = false
+    elseif ev[1] == "char" then
+        if ev[2] == "\n" or ev[2] == "\r" then
+            handleSubmit(input)
+            input = ""
+        else
+            input = input .. ev[2]
+        end
+    elseif ev[1] == "paste" then
+        input = input .. ev[2]
+    elseif ev[1] == "key" then
+        if ev[2] == KEY_BS then
+            input = input:sub(1, -2)
+        elseif ev[2] == KEY_ENTER then
+            local txt = input
+            input = ""
+            handleSubmit(txt)
+        elseif ev[2] == KEY_UP then
+            sc = math.min(sc + 1, math.max(0, #buf - VIS))
+        elseif ev[2] == KEY_DOWN then
+            sc = math.max(0, sc - 1)
+        end
+    elseif ev[1] == "mouse_scroll" then
+        sc = math.min(sc + ev[2], math.max(0, #buf - VIS))
+    end
+end
+
 local function mainGraphics()
+    dbg("boot mainGraphics")
     initGfx()
     if not gfx then return false end
+    dbg("graphics active", gw, gh)
     CPL = math.floor((gw - 14) / 6)
     VIS = visLines()
     dbg("gfx", gw, gh, "cpl", CPL, "vis", VIS)
     testConnection()
     fetchNodes()
     sysLine("Jarvis online. Type a message or /help")
-    local running = true
-    local timer = os.startTimer(0.35)
+    running = true
+    timer = os.startTimer(0.35)
     while running do
         local rerr = pcall(render)
         if not rerr then dbg("render error") end
@@ -441,35 +479,10 @@ local function mainGraphics()
             evP1 = tostring(ev[2] or "")
             dbg("ev", ev[1], tostring(ev[2]), tostring(ev[3]))
         end
-        if ev[1] == "timer" and ev[2] == timer then
-            timer = os.startTimer(0.35)
-        elseif ev[1] == "terminate" then
-            running = false
-        elseif ev[1] == "char" then
-            if ev[2] == "\n" or ev[2] == "\r" then
-                handleSubmit(input)
-                input = ""
-            else
-                input = input .. ev[2]
-            end
-        elseif ev[1] == "paste" then
-            input = input .. ev[2]
-        elseif ev[1] == "key" then
-            if ev[2] == KEY_BS then
-                input = input:sub(1, -2)
-            elseif ev[2] == KEY_ENTER then
-                local txt = input
-                input = ""
-                handleSubmit(txt)
-            elseif ev[2] == KEY_UP then
-                sc = math.min(sc + 1, math.max(0, #buf - VIS))
-            elseif ev[2] == KEY_DOWN then
-                sc = math.max(0, sc - 1)
-            end
-        elseif ev[1] == "mouse_scroll" then
-            sc = math.min(sc + ev[2], math.max(0, #buf - VIS))
-        end
+        local eok = pcall(dispatch, ev)
+        if not eok then dbg("dispatch error", ev[1]) end
     end
+    dbg("mainGraphics exit")
     pcall(term.setGraphicsMode, 0)
     return true
 end
@@ -526,9 +539,31 @@ local function mainText()
     end
 end
 
-local ok = pcall(mainGraphics)
-if not ok or not gfx then
-    pcall(term.setGraphicsMode, 0)
-    pcall(mainText)
+local function main()
+    local ok1, err1 = pcall(mainGraphics)
+    if not ok1 then error(tostring(err1), 0) end
+    if not gfx then
+        pcall(term.setGraphicsMode, 0)
+        local ok2, err2 = pcall(mainText)
+        if not ok2 then error(tostring(err2), 0) end
+        error("graphics mode unavailable", 0)
+    end
+    return true
 end
-pcall(term.setGraphicsMode, 0)
+
+local ok, err = pcall(main)
+if not ok then
+    dbg("FATAL", tostring(err))
+    pcall(term.setGraphicsMode, 0)
+    term.setTextColor(colors.red)
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
+    term.write("Jarvis crashed: " .. tostring(err))
+    os.sleep(8)
+    term.setTextColor(colors.white)
+    term.setBackgroundColor(colors.black)
+    term.clear()
+    term.setCursorPos(1, 1)
+    pcall(term.turnOff)
+end
