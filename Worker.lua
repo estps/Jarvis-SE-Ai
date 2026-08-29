@@ -1,31 +1,21 @@
 --[[
   Worker.lua - Node Controller for Jarvis AI System
   ComputerCraft 1.21.1 NeoForge
-  Runs on "normal computers" connected via wired modems
-  Handles Redstone output and Speaker TTS
+  Cloudflare Tunnel Mode - NO MODEMS NEEDED!
+  Connects to Host.py via HTTP through Cloudflare tunnel
 ]]--
 
--- Configuration
-local MODEM_SIDE = "right"  -- Default modem side
-local RED_TXT = "Red.txt"   -- Configuration file
-local REDNET_ALIAS = "worker"
+-- Configuration - Cloudflare Tunnel
+local TUNNEL_URL = "https://immunology-retrieved-dow-sort.trycloudflare.com"  -- Cloudflare tunnel local endpoint
+
+-- Redstone configuration
+local RED_TXT = "Red.txt"
+local redstoneState = false
+local toggleState = false
 
 -- State
-local redConfig = {}          -- Parsed Red.txt data
-local redstoneState = false -- Current redstone state
-local isToggleOn = false    -- Toggle state tracking
-local connectedToHost = false
-
--- Load ComputerCraft APIs
-local component = require("component")
-local redstone = component.redstone
-local sides = require("sides")
-local event = require("event")
-local modems = component.modem
-
-if not modems then
-    error("Modem component not found on this computer!")
-end
+local computerId = os.getComputerID()
+local isConnected = false
 
 -- Red.txt Parsing
 local function parseRedTxt()
@@ -33,170 +23,178 @@ local function parseRedTxt()
     
     local file = io.open(RED_TXT, "r")
     if not file then
-        -- Create default Red.txt if it doesn't exist
-        print("Red.txt not found. Creating default configuration...")
-        file = io.open(RED_TXT, "w")
-        file:setColor(16777215)  -- White text
-        file.write("Side:top\nTrigger:pulse\nDescription:Default node control\n")
-        file.close()
+        print("Red.txt not found! Using default configuration.")
         redConfig.side = "top"
         redConfig.trigger = "pulse"
         redConfig.description = "Default node control"
-        return
-    end
-    
-    for line in file:lines() do
-        local key, value = line:match("^(%a+):%s*(.+)$")
-        if key and value then
-            redConfig[key:lower()] = value:lower()
+    else
+        for line in file:lines() do
+            local key, value = line:match("^(%a+):%s*(.+)$")
+            if key and value then
+                redConfig[key:lower()] = value:lower()
+            end
         end
-    end
-    file.close()
-    
-    -- Validate required fields
-    if not redConfig.side then
-        error("Red.txt missing 'Side:' field!")
-    end
-    if not redConfig.trigger then
-        error("Red.txt missing 'Trigger:' field!")
+        file.close()
     end
     
-    print("Red.txt loaded successfully:")
-    print("  Side: " .. tostring(redConfig.side))
-    print("  Trigger: " .. tostring(redConfig.trigger))
-    print("  Description: " .. tostring(redConfig.description))
+    -- Validate
+    if not redConfig.side then redConfig.side = "top" end
+    if not redConfig.trigger then redConfig.trigger = "pulse" end
+    
+    print("Red.txt loaded: Side=" .. redConfig.side .. ", Trigger=" .. redConfig.trigger)
 end
 
--- Determine trigger action
+-- Set redstone output (ComputerCraft uses redstone.setOutput)
+local function setRedstone(state)
+    redstoneState = state
+    local side = redConfig.side
+    
+    if redstone.setOutput then
+        if state then
+            redstone.setOutput(side, true)
+        else
+            redstone.setOutput(side, false)
+        end
+    else
+        print("No redstone API - simulating: " .. (state and "ON" or "OFF"))
+    end
+    
+    -- In tunnel mode, we don't need to report back - Host tracks state
+end
+
+-- Trigger action based on Red.txt config
 local function handleTrigger()
     local trigger = redConfig.trigger
     
     if trigger == "pulse" then
-        -- Fire redstone pulse for 1 second
-        redstone.setOutput(redConfig.side, true)
+        setRedstone(true)
         sleep(1)
-        redstone.setOutput(redConfig.side, false)
-        print("Redstone pulse activated on " .. redConfig.side)
+        setRedstone(false)
+        print("Redstone pulse on side " .. redConfig.side)
         
     elseif trigger == "toggle" then
-        -- Toggle redstone state
-        isToggleOn = not isToggleOn
-        redstone.setOutput(redConfig.side, isToggleOn)
-        local status = isToggleOn and "ON" or "OFF"
-        print("Redstone toggled to " .. status .. " on " .. redConfig.side)
+        toggleState = not toggleState
+        setRedstone(toggleState)
+        local status = toggleState and "ON" or "OFF"
+        print("Redstone toggled to " .. status .. " on side " .. redConfig.side)
         
     elseif trigger == "pulse toggle" then
         -- Pulse then toggle
-        redstone.setOutput(redConfig.side, true)
+        setRedstone(true)
         sleep(0.5)
-        redstone.setOutput(redConfig.side, false)
+        setRedstone(false)
         sleep(0.5)
-        isToggleOn = not isToggleOn
-        redstone.setOutput(redConfig.side, isToggleOn)
-        local status = isToggleOn and "ON" or "OFF"
-        print("Redstone pulse+toggled to " .. status .. " on " .. redConfig.side)
+        toggleState = not toggleState
+        setRedstone(toggleState)
+        local status = toggleState and "ON" or "OFF"
+        print("Redstone pulse+toggled to " .. status .. " on side " .. redConfig.side)
     end
 end
 
--- Rednet Communication
+-- Cloudflare Tunnel: Connect to Host.py
+local function connectToHost()
+    -- Poll the tunnel endpoint to register and check for commands
+    isConnected = true
+    print("Connecting to Jarvis Host via Cloudflare tunnel...")
+    print("Tunnel URL: " .. TUNNEL_URL)
+end
+
+-- Send status to Host.py
 local function sendStatusToHost()
-    local statusMsg = {
-        type = "node_status",
-        node_id = os.getComputerID(),
-        status = "online",
-        side = redConfig.side,
-        trigger = redConfig.trigger,
-        description = redConfig.description,
-        redstone_state = redstone.getOutput(redConfig.side)
-    }
-    
-    rednet.send(os.getComputerID(), statusMsg, "jarvis_control")
+    local ok, err = pcall(function()
+        local URL = TUNNEL_URL .. "/register"
+        local response = http.get(URL)
+        if response then
+            response.close()
+            -- Worker registered successfully
+        end
+    end)
+    return ok
 end
 
-local function handleHostCommand(id, message)
-    if message.type == "jarvis_speech" then
-        -- Host wants us to speak
-        playTTS(message.text)
-        
-    elseif message.type == "command_query" then
-        -- AI is asking about our capabilities
-        local response = {
-            type = "node_capabilities",
-            node_id = os.getComputerID(),
-            capabilities = {
-                side = redConfig.side,
-                trigger = redConfig.trigger,
-                description = redConfig.description
-            }
-        }
-        rednet.send(id, response, "jarvis_control")
-    end
+-- Check for TTS commands from Host.py
+local function checkForTTS()
+    -- Poll Host.py for TTS commands
+    local ok, err = pcall(function()
+        local URL = TUNNEL_URL .. "/check_tts"
+        local response = http.get(URL)
+        if response then
+            local body = response.readAll()
+            response.close()
+            local success, data = pcall(textutils.unserialiseJSON, body)
+            if success and data then
+                if data.text then
+                    playTTS(data.text)
+                end
+            end
+        end
+    end)
+    return ok
 end
 
--- Speaker TTS
+-- Play TTS via speaker (ComputerCraft peripheral)
 local function playTTS(text)
-    local speaker = component.speaker
+    local speaker = peripheral.find("speaker")
     if speaker then
-        -- Try to use speaker TTS
         speaker.say(text)
         print("TTS: " .. text:sub(1, 30) .. (text:len() > 30 and "..." or ""))
     else
-        print("No speaker component found - text only:")
-        print(text)
+        print("No speaker component. Text: " .. text)
     end
 end
 
--- Main Setup
+-- Check for redstone commands from Host
+local function checkForCommands()
+    -- Poll Host.py for redstone commands
+    local ok, err = pcall(function()
+        local URL = TUNNEL_URL .. "/command"
+        local response = http.get(URL)
+        if response then
+            local body = response.readAll()
+            response.close()
+            local success, data = pcall(textutils.unserialiseJSON, body)
+            if success and data then
+                if data.action == "trigger_pulse" then
+                    handleTrigger()
+                elseif data.action == "toggle" then
+                    toggleState = not toggleState
+                    setRedstone(toggleState)
+                end
+            end
+        end
+    end)
+    return ok
+end
+
+-- Main loop
 local function main()
     -- Parse Red.txt configuration
     parseRedTxt()
     
-    -- Open modem
-    modems.open()
-    rednet.open(MODEM_SIDE)
-    rednet.setAlias(REDNET_ALIAS)
-    
-    -- Initial status broadcast
+    -- Connect to Host via Cloudflare tunnel
+    connectToHost()
     sendStatusToHost()
     
-    print("=" .. string.rep("=", 40))
+    -- Main event loop
     print("Worker Node Started")
-    print("Computer ID: " .. os.getComputerID())
-    print("Modem Side: " .. MODEM_SIDE)
+    print("Computer ID: " .. computerId)
+    print("Tunnel URL: " .. TUNNEL_URL)
     print("Redstone Side: " .. redConfig.side)
     print("Trigger Type: " .. redConfig.trigger)
     print("Description: " .. redConfig.description)
-    print("=" .. string.rep("=", 40))
-    print("Waiting for commands from Host...")
-    print("Commands supported:")
-    print("  - TTS: Text-to-speech via speaker")
-    print("  - Redstone: " .. redConfig.trigger .. " on " .. redConfig.side)
-    print("=" .. string.rep("=", 40))
+    print("Listening for commands from Host.py via Cloudflare tunnel...")
+    print()
     
-    -- Main event loop
     while true do
-        local eventName, id, message, distance = event.pull("modem_message")
+        -- Check for TTS commands
+        checkForTTS()
         
-        if eventName == "modem_message" and id then
-            handleHostCommand(id, message)
-        end
+        -- Check for redstone commands
+        checkForCommands()
         
-        -- Optional: Check for redstone input changes
-        -- Could be used for trigger detection from computers
-        local rsEvent = event.pull(0.1, "redstone_changed")
-        if rsEvent then
-            -- Redstone state changed, could trigger actions
-        end
+        -- Poll every 2 seconds
+        sleep(2)
     end
-end
-
--- Exit handler
-local function onExit()
-    -- Ensure redstone is off
-    if redstone then
-        redstone.setOutput(redConfig.side, false)
-    end
-    print("Worker node shutting down...")
 end
 
 -- Run main
