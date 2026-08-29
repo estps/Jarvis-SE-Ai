@@ -295,7 +295,7 @@ local function jsonIt(t)
 end
 
 local function testConnection()
-    local ok, resp = pcall(http.get, TUNNEL_URL .. "/", {}, 5000)
+    local ok, resp = pcall(http.get, TUNNEL_URL .. "/", {}, false, false, 5000)
     if ok and resp then
         local body = resp.readAll()
         resp.close()
@@ -309,14 +309,14 @@ end
 local function playJarvisTTS(text)
     pcall(function()
         local ok, resp = pcall(http.post, TUNNEL_URL .. "/tts", jsonIt({ text = text }),
-            { ["Content-Type"] = "application/json" }, 3000)
+            { ["Content-Type"] = "application/json" }, false, false, 3000)
         if ok and resp then resp.close() end
     end)
 end
 
 local function fetchNodes()
     pcall(function()
-        local ok, resp = pcall(http.get, TUNNEL_URL .. "/nodes", {}, 4000)
+        local ok, resp = pcall(http.get, TUNNEL_URL .. "/nodes", {}, false, false, 4000)
         if ok and resp then
             local body = resp.readAll()
             resp.close()
@@ -387,7 +387,7 @@ local function sendToAI(text)
     render()
     local received = false
     local ok, resp = pcall(http.post, TUNNEL_URL .. "/ask", jsonIt({ question = text }),
-        { ["Content-Type"] = "application/json" }, 20000)
+        { ["Content-Type"] = "application/json" }, false, false, 20000)
     if ok and resp then
         local body = resp.readAll()
         resp.close()
