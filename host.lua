@@ -128,11 +128,13 @@ local evP1 = ""
 local evP2 = ""
 
 local function dbg(...)
-    local f = io.open("/dbg.txt", "a")
-    if f then
-        f.write(os.clock() .. " " .. table.concat({ ... }, " ") .. "\n")
-        f.close()
-    end
+    pcall(function()
+        local f = fs.open("/dbg.txt", "a")
+        if f then
+            f.write(os.clock() .. " " .. table.concat({ ... }, " ") .. "\n")
+            f.close()
+        end
+    end)
 end
 
 dbg("script start")
