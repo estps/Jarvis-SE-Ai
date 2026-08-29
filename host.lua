@@ -122,6 +122,27 @@ local PAL = {
     {28, 44, 69, 112}, {29, 50, 224, 255}
 }
 
+local dbgOn = true
+local lastEv = "none"
+local evP1 = ""
+local evP2 = ""
+
+local function dbg(...)
+    local f = io.open("/dbg.txt", "a")
+    if f then
+        f.write(os.clock() .. " " .. table.concat({ ... }, " ") .. "\n")
+        f.close()
+    end
+end
+
+local function bytesStr(s)
+    local t = {}
+    for i = 1, #s do
+        t[i] = string.byte(s, i)
+    end
+    return table.concat(t, ",")
+end
+
 local gw, gh = 1, 1
 local gfx = false
 local function initGfx()
@@ -135,6 +156,7 @@ local function initGfx()
         end
     end)
     if ok then gfx = true end
+    dbg("initGfx ok", gfx)
 end
 
 local function rect(x, y, w, h, c)
@@ -216,6 +238,12 @@ local function char(idx)
 end
 
 local cW = char(P.white)
+local function visLines()
+    local v = math.floor((gh - 37) / 8)
+    if dbgOn then v = v - 1 end
+    return math.max(4, v)
+end
+
 local function render()
     term.setFrozen(true)
     rect(0, 0, gw, gh, P.bg)
@@ -234,12 +262,17 @@ local function render()
     rect(0, iy, gw, 15, P.input)
     rect(0, iy, gw, 1, P.inbd)
     rect(0, iy + 14, gw, 1, P.inbd)
+    local msgTop = 20
+    if dbgOn then
+        drawText(6, 18, lastEv .. " " .. evP1 .. "|" .. bytesStr(input), char(P.warn), char(P.bg))
+        msgTop = 27
+    end
     local n = #buf
     local from = math.max(1, n - VIS - sc + 1)
     local to = math.max(0, n - sc)
     local lineNo = 0
     for i = from, to do
-        drawText(6, 20 + lineNo * 8, buf[i].txt, char(buf[i].fg), char(P.bg))
+        drawText(6, msgTop + lineNo * 8, buf[i].txt, char(buf[i].fg), char(P.bg))
         lineNo = lineNo + 1
     end
     drawText(6, iy + 4, ">", char(P.dim), char(P.input))
@@ -319,7 +352,11 @@ local function runCommand(line)
         fetchNodes()
         sysLine("Workers connected: " .. tostring(nodeCount))
     elseif c == "/help" then
-        sysLine("/ping /nodes /clear /help /exit /reboot")
+        sysLine("/ping /nodes /clear /help /debug /exit /reboot")
+    elseif c == "/debug" then
+        dbgOn = not dbgOn
+        if gfx then VIS = visLines() end
+        sysLine("Debug " .. (dbgOn and "ON" or "OFF") .. " - see /dbg.txt")
     elseif c == "/exit" then
         pcall(term.setGraphicsMode, 0)
         term.setTextColor(colors.white)
@@ -362,43 +399,71 @@ local function sendToAI(text)
     render()
 end
 
+local KEY_BS = 14
+local KEY_ENTER = 28
+local KEY_UP = 200
+local KEY_DOWN = 208
+if type(keys) == "table" then
+    KEY_BS = keys.backspace or KEY_BS
+    KEY_ENTER = keys.enter or KEY_ENTER
+    KEY_UP = keys.up or KEY_UP
+    KEY_DOWN = keys.down or KEY_DOWN
+end
+
+local function handleSubmit(txt)
+    if txt ~= "" then
+        if txt:sub(1, 1) == "/" then
+            runCommand(txt)
+        else
+            sendToAI(txt)
+        end
+    end
+end
+
 local function mainGraphics()
     initGfx()
     if not gfx then return false end
     CPL = math.floor((gw - 14) / 6)
-    VIS = math.floor((gh - 37) / 8)
+    VIS = visLines()
+    dbg("gfx", gw, gh, "cpl", CPL, "vis", VIS)
     testConnection()
     fetchNodes()
     sysLine("Jarvis online. Type a message or /help")
     local running = true
     local timer = os.startTimer(0.35)
     while running do
-        render()
+        local rerr = pcall(render)
+        if not rerr then dbg("render error") end
         local ev = { os.pullEventRaw() }
+        lastEv = tostring(ev[1] or "nil")
+        evP2 = tostring(ev[3] or "")
+        if ev[1] == "char" or ev[1] == "key" or ev[1] == "paste" or ev[1] == "terminate" or ev[1] == "timer" or ev[1] == "mouse_scroll" then
+            evP1 = tostring(ev[2] or "")
+            dbg("ev", ev[1], tostring(ev[2]), tostring(ev[3]))
+        end
         if ev[1] == "timer" and ev[2] == timer then
             timer = os.startTimer(0.35)
         elseif ev[1] == "terminate" then
             running = false
         elseif ev[1] == "char" then
-            input = input .. ev[2]
+            if ev[2] == "\n" or ev[2] == "\r" then
+                handleSubmit(input)
+                input = ""
+            else
+                input = input .. ev[2]
+            end
         elseif ev[1] == "paste" then
             input = input .. ev[2]
         elseif ev[1] == "key" then
-            if ev[2] == 14 then
+            if ev[2] == KEY_BS then
                 input = input:sub(1, -2)
-            elseif ev[2] == 28 then
+            elseif ev[2] == KEY_ENTER then
                 local txt = input
                 input = ""
-                if txt ~= "" then
-                    if txt:sub(1, 1) == "/" then
-                        runCommand(txt)
-                    else
-                        sendToAI(txt)
-                    end
-                end
-            elseif ev[2] == 200 then
+                handleSubmit(txt)
+            elseif ev[2] == KEY_UP then
                 sc = math.min(sc + 1, math.max(0, #buf - VIS))
-            elseif ev[2] == 208 then
+            elseif ev[2] == KEY_DOWN then
                 sc = math.max(0, sc - 1)
             end
         elseif ev[1] == "mouse_scroll" then
@@ -415,6 +480,7 @@ local TXTCOL = {
 }
 
 local function mainText()
+    dbg("mainText entered")
     testConnection()
     fetchNodes()
     CPL = term.getSize() - 4
