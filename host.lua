@@ -1,4 +1,4 @@
-local TUNNEL_URL = "https://immunology-retrieved-dow-sort.trycloudflare.com"
+local TUNNEL_URL = "https://pty-climbing-senior-emails.trycloudflare.com"
 local CFG_FILE = "jarvis_config.json"
 if fs.exists(CFG_FILE) then
     local ch = fs.open(CFG_FILE, "r")
