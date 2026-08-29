@@ -13,6 +13,7 @@ local OLAMA_MODEL = "phi3:mini"
 local conversation = {}
 local isRunning = true
 local connected = false
+local lastError = nil
 
 -- UI Colors (ComputerCraft 16-color palette: 0-15)
 local ccColors = {
@@ -43,7 +44,13 @@ local function drawBorder(height, title)
 
     term.setTextColor(statusColor)
     term.setCursorPos(1, 2)
-    write("[" .. status .. "] HOST.PY")
+    if connected then
+        write("[ONLINE] HOST.PY")
+    elseif lastError then
+        write("[OFFLINE] " .. string.sub(lastError, 1, 37))
+    else
+        write("[OFFLINE] HOST.PY")
+    end
 
     local y = 3
     local maxLines = promptLine - 1
@@ -78,18 +85,20 @@ end
 -- Test connection to Host.py through the tunnel
 local function testConnection()
     local ok, err = pcall(function()
-        local response = http.get(TUNNEL_URL .. "/status", nil, 10)
+        local response = http.get(TUNNEL_URL .. "/status")
         if response then
             local body = response.readAll()
             response.close()
-            local data = textutils.unserialiseJSON(body)
-            connected = not not data
+            connected = string.find(body, "ok", 1, true) ~= nil
         else
             connected = false
         end
     end)
     if not ok then
         connected = false
+        lastError = tostring(err)
+    else
+        lastError = nil
     end
     return connected
 end
@@ -186,8 +195,10 @@ local function mainLoop()
     local okConn = testConnection()
     if okConn then
         addMessage("Connected to Host.py via Cloudflare tunnel!", false)
+    elseif lastError then
+        addMessage("NOT connected. Error: " .. lastError, false)
     else
-        addMessage("NOT connected to Host.py. Check tunnel URL / Host.py running.", false)
+        addMessage("NOT connected to Host.py. Check Host.py / tunnel.", false)
     end
 
     drawBorder(20, "Jarvis AI Interface")
