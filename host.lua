@@ -7,7 +7,7 @@
 
 -- Configuration - Cloudflare Tunnel
 local TUNNEL_URL = "https://immunology-retrieved-dow-sort.trycloudflare.com"
-local OLAMA_MODEL = "phi3:mini"
+local OLAMA_MODEL = "gemma4:31b-cloud"
 
 -- State
 local conversation = {}
