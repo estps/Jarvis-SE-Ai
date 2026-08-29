@@ -191,6 +191,7 @@ end
 
 local buf = {}
 local online = false
+local connErr = ""
 local nodeCount = 0
 local sc = 0
 local input = ""
@@ -294,13 +295,14 @@ local function jsonIt(t)
 end
 
 local function testConnection()
-    local ok, resp = pcall(http.get, TUNNEL_URL .. "/", {}, 4000)
+    local ok, resp = pcall(http.get, TUNNEL_URL .. "/", {}, 5000)
     if ok and resp then
         local body = resp.readAll()
         resp.close()
         online = true
     else
         online = false
+        connErr = tostring(resp)
     end
 end
 
@@ -352,7 +354,7 @@ local function runCommand(line)
         if online then
             sysLine("Link OK  " .. TUNNEL_URL)
         else
-            sysLine("Host unreachable - start Host.py")
+            sysLine("Host unreachable: " .. connErr)
         end
     elseif c == "/nodes" then
         fetchNodes()
@@ -396,11 +398,13 @@ local function sendToAI(text)
             popThinking()
             addMsg(P.ai, answer)
             playJarvisTTS(answer)
+        elseif not received then
+            popThinking()
+            addMsg(P.err, "Bad reply: " .. (ok2 and "(empty body)" or body:sub(1, 60)))
         end
-    end
-    if not received then
+    else
         popThinking()
-        addMsg(P.err, "Connection error. Is Host.py running?")
+        addMsg(P.err, "POST failed: " .. tostring(resp))
     end
     render()
 end
