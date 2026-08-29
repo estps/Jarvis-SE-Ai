@@ -6,12 +6,13 @@
 ]]--
 
 -- Configuration - Cloudflare Tunnel
-local TUNNEL_URL = "http://127.0.0.1:5999"
+local TUNNEL_URL = "https://immunology-retrieved-dow-sort.trycloudflare.com"
 local OLAMA_MODEL = "phi3:mini"
 
 -- State
 local conversation = {}
 local isRunning = true
+local connected = false
 
 -- UI Colors (ComputerCraft 16-color palette: 0-15)
 local ccColors = {
@@ -25,25 +26,40 @@ local ccColors = {
 
 -- Draw border function
 local function drawBorder(height, title)
+    local promptLine = height - 1
     term.setBackgroundColor(ccColors.background)
     term.clear()
 
+    local status = "OFFLINE"
+    local statusColor = colors.red
+    if connected then
+        status = "ONLINE"
+        statusColor = colors.green
+    end
+
+    term.setTextColor(ccColors.primary)
     term.setCursorPos(1, 1)
     write("== " .. title .. " ==")
 
+    term.setTextColor(statusColor)
+    term.setCursorPos(1, 2)
+    write("[" .. status .. "] HOST.PY")
+
     local y = 3
-    for i = math.max(1, #conversation - 15), #conversation do
+    local maxLines = promptLine - 1
+    local start = math.max(1, #conversation - (maxLines - y))
+    for i = start, #conversation do
         local line = conversation[i]
         if line then
             term.setCursorPos(2, y)
-            local display = string.sub(line, 1, 38)
+            local display = string.sub(line, 1, 37)
             write(display)
             y = y + 1
+            if y > maxLines then break end
         end
     end
 
-    local bottomY = math.min(height - 1, y + 1)
-    term.setCursorPos(1, bottomY + 1)
+    term.setCursorPos(1, promptLine)
     term.setBackgroundColor(ccColors.secondary)
     term.clearLine()
     term.setTextColor(ccColors.text)
@@ -57,6 +73,25 @@ local function addMessage(text, isUser)
     if #conversation > 50 then
         table.remove(conversation, 1)
     end
+end
+
+-- Test connection to Host.py through the tunnel
+local function testConnection()
+    local ok, err = pcall(function()
+        local response = http.get(TUNNEL_URL .. "/status", nil, 10)
+        if response then
+            local body = response.readAll()
+            response.close()
+            local data = textutils.unserialiseJSON(body)
+            connected = not not data
+        else
+            connected = false
+        end
+    end)
+    if not ok then
+        connected = false
+    end
+    return connected
 end
 
 -- Send question to Host.py via Cloudflare tunnel
@@ -146,9 +181,18 @@ end
 
 -- Main UI loop
 local function mainLoop()
-    drawBorder(20, "Jarvis AI Interface (Cloudflare Tunnel)")
+    -- Test connection to Host.py on startup
+    addMessage("Testing connection to Host.py...", false)
+    local okConn = testConnection()
+    if okConn then
+        addMessage("Connected to Host.py via Cloudflare tunnel!", false)
+    else
+        addMessage("NOT connected to Host.py. Check tunnel URL / Host.py running.", false)
+    end
 
-while isRunning do
+    drawBorder(20, "Jarvis AI Interface")
+
+    while isRunning do
         term.setCursorPos(1, 19)
         term.setBackgroundColor(ccColors.secondary)
         term.clearLine()
@@ -162,6 +206,14 @@ while isRunning do
 
             if cmd == "/clear" then
                 conversation = {}
+                drawBorder(20, "Jarvis AI Interface")
+            elseif cmd == "/ping" then
+                local okConn = testConnection()
+                if okConn then
+                    addMessage("PONG! Connected to Host.py.", false)
+                else
+                    addMessage("No response from Host.py. Is it running?", false)
+                end
                 drawBorder(20, "Jarvis AI Interface")
             elseif cmd == "/nodes" then
                 local ok, err = pcall(function()
@@ -188,6 +240,7 @@ while isRunning do
             elseif cmd == "/help" then
                 addMessage("Available commands:", false)
                 addMessage("/clear - Clear conversation history", false)
+                addMessage("/ping - Test connection to Host.py", false)
                 addMessage("/nodes - Show connected worker nodes", false)
                 addMessage("/help - Show this help", false)
                 addMessage("Just type a question to ask Jarvis!", false)
