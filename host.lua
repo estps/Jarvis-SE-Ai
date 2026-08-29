@@ -1,29 +1,17 @@
 --[[
   Host.lua - Main Interface for Jarvis AI System
   ComputerCraft 1.21.1 NeoForge
-  Controls AI interaction, TTS, and worker node coordination
+  Cloudflare Tunnel Mode - No modems needed!
+  Connects to Host.py via HTTPS through Cloudflare tunnel
 ]]--
 
--- Configuration
-local MODEM_SIDE = "top"
-local OLAMA_HOST = "http://localhost:11434"
+-- Configuration - Cloudflare Tunnel
+local TUNNEL_URL = "http://127.0.0.1:5999"  -- Cloudflare tunnel local endpoint
 local OLAMA_MODEL = "phi3:mini"
-local TTS_VOICE = "Jarvis"
 
 -- State
 local conversation = {}
 local isRunning = true
-local connectedNodes = {}
-
--- Load APIs
-os.loadAPI("speaker")
-local component = require("component")
-local modem = component.modem
-if not modem then
-    error("Modem component not found!")
-
-rednet.open(MODEM_SIDE)
-end
 
 -- UI Colors
 local colors = {
@@ -81,13 +69,12 @@ end
 local function addMessage(text, isUser)
     local prefix = isUser and "You" or "Jarvis"
     table.insert(conversation, "[" .. prefix .. "] " .. text)
-    -- Keep only last 50 messages
     if #conversation > 50 then
         table.remove(conversation, 1)
     end
 end
 
--- Send question to Host.py
+-- Send question to Host.py via Cloudflare tunnel
 local function sendToAI(question)
     addMessage(question, true)
     drawBorder(20, "Jarvis AI Interface")
@@ -95,37 +82,45 @@ local function sendToAI(question)
     -- Show thinking...
     addMessage("Jarvis is thinking...", false)
     
-    -- Call Host.py
-    local success, result = os.execute(string.format(
-        'python Host.py "%s"', 
-        question:gsub('"', '\\"')
-    ))
-    
-    -- Read response from file
-    local responseFile = "/tmp/jarvis_response.txt"
-    local file = io.open(responseFile, "r")
-    local aiResponse = ""
-    if file then
-        aiResponse = file:read("*a")
-        file:close()
-    end
-    
-    -- Clear thinking message and add real response
-    -- Remove the "thinking..." message (last entry)
-    if #conversation > 0 then
-        conversation[#conversation] = nil
-    end
-    
-    if aiResponse and #aiResponse > 0 then
-        addMessage(aiResponse, false)
+    -- Call Host.py via Cloudflare tunnel
+    local success, err = pcall(function()
+        local URL = TUNNEL_URL .. "/ask"
+        local postData = json.encode({question = question})
+        local headers = {
+            ["Content-Type"] = "application/json",
+            ["Content-Length"] = tostring(#postData)
+        }
         
-        -- Play TTS
-        playJarvisTTS(aiResponse)
-        
-        -- Notify workers
-        notifyWorkers(aiResponse)
-    else
-        addMessage("Jarvis: Sorry, I couldn't get a response from the AI.", false)
+        local response = http.post(URL, postData, headers)
+        if response then
+            local body = response.body
+            local data = textutils.unserialize(body)
+            
+            -- Remove thinking message
+            if #conversation > 0 then
+                conversation[#conversation] = nil
+            end
+            
+            if data and data.response then
+                addMessage(data.response, false)
+                
+                -- Play TTS
+                playJarvisTTS(data.response)
+                
+                -- Notify workers via tunnel
+                notifyWorkers(data.response)
+            else
+                addMessage("Jarvis: Sorry, no response from AI.", false)
+            end
+        end
+    end)
+    
+    if not success then
+        addMessage("Jarvis: Connection error. Is Host.py running with Cloudflare tunnel?", false)
+        -- Remove thinking message
+        if #conversation > 0 and conversation[#conversation]:find("thinking") then
+            conversation[#conversation] = nil
+        end
     end
     
     drawBorder(20, "Jarvis AI Interface")
@@ -142,84 +137,58 @@ local function playJarvisTTS(text)
     term.setTextColor(colors.text)
     write("...")
     
-    -- Use speaker TTS
-    if speaker and speaker.playTTS then
-        speaker.playTTS(text, 1.0)
+    -- Use speaker TTS if available
+    local ok, err = pcall(function()
+        local speaker = component.speaker
+        if speaker and speaker.say then
+            speaker.say(text)
+        end
+    end)
+    
+    if not ok then
+        print("TTS: " .. text:sub(1, 30) .. (text:len() > 30 and "..." or ""))
     end
     
-    -- Broadcast to all worker nodes via rednet
-    local msg = {
-        type = "jarvis_speech",
-        text = text,
-        source = "host"
-    }
-    rednet.broadcast(msg, "jarvis_control")
+    -- Notify ALL worker computers via Cloudflare tunnel
+    -- They will play the TTS audio locally
+    local ok2, err2 = pcall(function()
+        local URL = TUNNEL_URL .. "/tts"
+        local postData = json.encode({text = text})
+        local headers = {["Content-Type"] = "application/json"}
+        http.post(URL, postData, headers)
+    end)
 end
 
--- Notify all worker nodes
+-- Notify all worker nodes via Cloudflare tunnel
 local function notifyWorkers(message)
-    local msg = {
-        type = "command",
-        command = message,
-        source = "host"
-    }
-    rednet.broadcast(msg, "worker_commands")
+    local ok, err = pcall(function()
+        local URL = TUNNEL_URL .. "/nodes"
+        local postData = json.encode({command = message, action = "notify"})
+        local headers = {["Content-Type"] = "application/json"}
+        http.post(URL, postData, headers)
+    end)
     
-    -- Update node list
-    connectedNodes = {}
-    local nodeCount = rednet.lookup("worker", "jarvis_control")
-    if nodeCount then
-        for i = 1, nodeCount do
-            local id, _ = rednet.receive("worker_status", 0.1)
-            if id then
-                connectedNodes[#connectedNodes + 1] = id
-            end
-        end
-    end
+    -- Don't wait for response - fire and forget
 end
 
--- Handle incoming messages from workers
-local function handleWorkerMessage(id, message)
-    if message.type == "node_status" then
-        connectedNodes[id] = {
-            status = message.status,
-            capabilities = message.capabilities or {}
-        }
-        addMessage("Node " .. id .. " connected: " .. (message.status or "unknown"), false)
-    end
-end
-
--- Setup modem event handler
-local function setupModem()
-    rednet.open(MODEM_SIDE)
-    rednet.host("jarvis_control", "host_main")
-    
-    -- Set up event handler
-    local eventHandler = function(event, ...)
-        local type, message, distance = ...
-        if type == "modem_message" then
-            handleWorkerMessage(...)
+-- Handle incoming data from workers (optional polling)
+local function checkForWorkerResponses()
+    -- In tunnel mode, we can poll for worker status
+    -- This is optional - workers could also send messages independently
+    local ok, err = pcall(function()
+        local URL = TUNNEL_URL .. "/status"
+        local response = http.get(URL)
+        if response then
+            local body = response.body
+            -- Could update node status display
         end
-    end
-    
-    rednet.receive = function(...)
-        -- Wrap the original receive
-        return eventHandler(...)
-    end
+    end)
 end
 
 -- Main UI loop
 local function mainLoop()
     -- Initial UI setup
-    drawBorder(20, "Jarvis AI Interface")
-    
-    -- Setup modem
-    setupModem()
-    
-    -- Set up event handling
-    term.setBackgroundColor(colors.background)
-    term.clear()
-    term.setTextColor(colors.text)
+    drawBorder(20, "Jarvis AI Interface (Cloudflare Tunnel)")
     
     while isRunning do
         -- Draw input prompt
@@ -240,15 +209,26 @@ local function mainLoop()
                 conversation = {}
                 drawBorder(20, "Jarvis AI Interface")
             elseif cmd == "/nodes" then
-                local nodeInfo = ""
-                for nodeId, nodeData in pairs(connectedNodes) do
-                    nodeInfo = nodeInfo .. "Node " .. nodeId .. ": " .. (nodeData.status or "offline") .. "\n"
-                end
-                if #nodeInfo > 0 then
-                    addMessage("Connected nodes:\n" .. nodeInfo, false)
-                else
-                    addMessage("No connected nodes found.", false)
-                end
+                -- Query connected nodes
+                local ok, err = pcall(function()
+                    local URL = TUNNEL_URL .. "/nodes"
+                    local response = http.get(URL)
+                    if response then
+                        local body = response.body
+                        local data = textutils.unserialize(body)
+                        if data and data.nodes then
+                            local nodeInfo = ""
+                            for nodeId, nodeData in pairs(data.nodes) do
+                                nodeInfo = nodeInfo .. "Node " .. nodeId .. ": " .. (nodeData.status or "offline") .. "\n"
+                            end
+                            if #nodeInfo > 0 then
+                                addMessage("Connected nodes:\n" .. nodeInfo, false)
+                            else
+                                addMessage("No connected nodes found.", false)
+                            end
+                        end
+                    end
+                end)
                 drawBorder(20, "Jarvis AI Interface")
             elseif cmd == "/help" then
                 addMessage("Available commands:", false)
@@ -258,7 +238,7 @@ local function mainLoop()
                 addMessage("Just type a question to ask Jarvis!", false)
                 drawBorder(20, "Jarvis AI Interface")
             else
-                -- Send to AI
+                -- Send to AI via Cloudflare tunnel
                 sendToAI(input)
             end
         end
@@ -275,5 +255,4 @@ local function onExit()
 end
 
 -- Run main
-setupModem()
 mainLoop()
