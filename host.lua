@@ -2,7 +2,7 @@
   Host.lua - Main Interface for Jarvis AI System
   ComputerCraft 1.21.1 NeoForge
   Cloudflare Tunnel Mode - No modems needed!
-  Connects to Host.py via HTTPS through Cloudflare tunnel
+  Connects to Host.py via HTTP through Cloudflare tunnel
 ]]--
 
 -- Configuration - Cloudflare Tunnel
@@ -13,7 +13,7 @@ local OLAMA_MODEL = "phi3:mini"
 local conversation = {}
 local isRunning = true
 
--- UI Colors
+-- UI Colors (ComputerCraft uses 0-15 color palette, but we use hex for term.setTextColor)
 local colors = {
     background = 0x0d0d0d,
     primary = 0x00bfff,
@@ -82,10 +82,10 @@ local function sendToAI(question)
     -- Show thinking...
     addMessage("Jarvis is thinking...", false)
     
-    -- Call Host.py via Cloudflare tunnel
+    -- Call Host.py via Cloudflare tunnel using http API
     local success, err = pcall(function()
         local URL = TUNNEL_URL .. "/ask"
-        local postData = json.encode({question = question})
+        local postData = textutils.serialiseJSON({question = question})
         local headers = {
             ["Content-Type"] = "application/json",
             ["Content-Length"] = tostring(#postData)
@@ -93,8 +93,9 @@ local function sendToAI(question)
         
         local response = http.post(URL, postData, headers)
         if response then
-            local body = response.body
-            local data = textutils.unserialize(body)
+            local body = response.readAll()
+            response.close()
+            local data = textutils.unserialiseJSON(body)
             
             -- Remove thinking message
             if #conversation > 0 then
@@ -137,9 +138,9 @@ local function playJarvisTTS(text)
     term.setTextColor(colors.text)
     write("...")
     
-    -- Use speaker TTS if available
+    -- Use speaker TTS if available (ComputerCraft speaker peripheral)
     local ok, err = pcall(function()
-        local speaker = component.speaker
+        local speaker = peripheral.find("speaker")
         if speaker and speaker.say then
             speaker.say(text)
         end
@@ -150,10 +151,9 @@ local function playJarvisTTS(text)
     end
     
     -- Notify ALL worker computers via Cloudflare tunnel
-    -- They will play the TTS audio locally
     local ok2, err2 = pcall(function()
         local URL = TUNNEL_URL .. "/tts"
-        local postData = json.encode({text = text})
+        local postData = textutils.serialiseJSON({text = text})
         local headers = {["Content-Type"] = "application/json"}
         http.post(URL, postData, headers)
     end)
@@ -163,26 +163,12 @@ end
 local function notifyWorkers(message)
     local ok, err = pcall(function()
         local URL = TUNNEL_URL .. "/nodes"
-        local postData = json.encode({command = message, action = "notify"})
+        local postData = textutils.serialiseJSON({command = message, action = "notify"})
         local headers = {["Content-Type"] = "application/json"}
         http.post(URL, postData, headers)
     end)
     
     -- Don't wait for response - fire and forget
-end
-
--- Handle incoming data from workers (optional polling)
-local function checkForWorkerResponses()
-    -- In tunnel mode, we can poll for worker status
-    -- This is optional - workers could also send messages independently
-    local ok, err = pcall(function()
-        local URL = TUNNEL_URL .. "/status"
-        local response = http.get(URL)
-        if response then
-            local body = response.body
-            -- Could update node status display
-        end
-    end)
 end
 
 -- Main UI loop
@@ -214,12 +200,13 @@ local function mainLoop()
                     local URL = TUNNEL_URL .. "/nodes"
                     local response = http.get(URL)
                     if response then
-                        local body = response.body
-                        local data = textutils.unserialize(body)
+                        local body = response.readAll()
+                        response.close()
+                        local data = textutils.unserialiseJSON(body)
                         if data and data.nodes then
                             local nodeInfo = ""
-                            for nodeId, nodeData in pairs(data.nodes) do
-                                nodeInfo = nodeInfo .. "Node " .. nodeId .. ": " .. (nodeData.status or "offline") .. "\n"
+                            for _, nodeData in pairs(data.nodes) do
+                                nodeInfo = nodeInfo .. "Node: " .. (nodeData.addr or "unknown") .. " " .. (nodeData.status or "offline") .. "\n"
                             end
                             if #nodeInfo > 0 then
                                 addMessage("Connected nodes:\n" .. nodeInfo, false)
