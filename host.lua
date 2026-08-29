@@ -13,19 +13,19 @@ local OLAMA_MODEL = "phi3:mini"
 local conversation = {}
 local isRunning = true
 
--- UI Colors
-local colors = {
-    background = 0x0d0d0d,
-    primary = 0x00bfff,
-    secondary = 0x303030,
-    text = 0xffffff,
-    muted = 0x888888,
-    accent = 0xffd700
+-- UI Colors (ComputerCraft 16-color palette: 0-15)
+local ccColors = {
+    background = colors.black,
+    primary = colors.lightBlue,
+    secondary = colors.gray,
+    text = colors.white,
+    muted = colors.lightGray,
+    accent = colors.yellow
 }
 
 -- Draw border function
 local function drawBorder(height, title)
-    term.setBackgroundColor(colors.background)
+    term.setBackgroundColor(ccColors.background)
     term.clear()
 
     term.setCursorPos(1, 1)
@@ -44,9 +44,9 @@ local function drawBorder(height, title)
 
     local bottomY = math.min(height - 1, y + 1)
     term.setCursorPos(1, bottomY + 1)
-    term.setBackgroundColor(colors.secondary)
+    term.setBackgroundColor(ccColors.secondary)
     term.clearLine()
-    term.setTextColor(colors.text)
+    term.setTextColor(ccColors.text)
     write("> ")
 end
 
@@ -106,13 +106,13 @@ end
 
 -- Play Jarvis TTS
 local function playJarvisTTS(text)
-    term.setTextColor(colors.accent)
+    term.setTextColor(ccColors.accent)
     write("[" .. os.time() .. "] ")
-    term.setTextColor(colors.text)
+    term.setTextColor(ccColors.text)
     write("Speaking: ")
-    term.setTextColor(colors.accent)
+    term.setTextColor(ccColors.accent)
     write(text:sub(1, 20))
-    term.setTextColor(colors.text)
+    term.setTextColor(ccColors.text)
     write("...")
 
     local ok, err = pcall(function()
@@ -148,11 +148,11 @@ end
 local function mainLoop()
     drawBorder(20, "Jarvis AI Interface (Cloudflare Tunnel)")
 
-    while isRunning do
+while isRunning do
         term.setCursorPos(1, 19)
-        term.setBackgroundColor(colors.secondary)
+        term.setBackgroundColor(ccColors.secondary)
         term.clearLine()
-        term.setTextColor(colors.muted)
+        term.setTextColor(ccColors.muted)
         write("> ")
 
         local input = read()
