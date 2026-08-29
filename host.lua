@@ -1,267 +1,468 @@
---[[
-  Host.lua - Main Interface for Jarvis AI System
-  ComputerCraft 1.21.1 NeoForge
-  Cloudflare Tunnel Mode - No modems needed!
-  Connects to Host.py via HTTP through Cloudflare tunnel
-]]--
-
--- Configuration - Cloudflare Tunnel
 local TUNNEL_URL = "https://immunology-retrieved-dow-sort.trycloudflare.com"
-local OLAMA_MODEL = "gemma4:31b-cloud"
+local CFG_FILE = "jarvis_config.json"
+if fs.exists(CFG_FILE) then
+    local ch = fs.open(CFG_FILE, "r")
+    if ch then
+        local ok, t = pcall(textutils.unserialiseJSON, ch.readAll())
+        if ok and t and t.tunnel_url and t.tunnel_url ~= "" then
+            TUNNEL_URL = t.tunnel_url
+            if TUNNEL_URL:sub(-1) == "/" then TUNNEL_URL = TUNNEL_URL:sub(1, -2) end
+        end
+        ch.close()
+    end
+end
 
--- State
-local conversation = {}
-local isRunning = true
-local connected = false
-local lastError = nil
+local G = {}
+local function rows(a) return a end
+G["A"] = rows({".#...", "#..#.", "#..#.", "#####", "#..#.", "#..#.", "#..#."})
+G["B"] = rows({"####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."})
+G["C"] = rows({".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."})
+G["D"] = rows({"####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."})
+G["E"] = rows({"#####", "#....", "#....", "####.", "#....", "#....", "#####"})
+G["F"] = rows({"#####", "#....", "#....", "####.", "#....", "#....", "#...."})
+G["G"] = rows({".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."})
+G["H"] = rows({"#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"})
+G["I"] = rows({".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."})
+G["J"] = rows({"..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."})
+G["K"] = rows({"#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"})
+G["L"] = rows({"#....", "#....", "#....", "#....", "#....", "#....", "#####"})
+G["M"] = rows({"#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"})
+G["N"] = rows({"#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"})
+G["O"] = rows({".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."})
+G["P"] = rows({"####.", "#...#", "#...#", "####.", "#....", "#....", "#...."})
+G["Q"] = rows({".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"})
+G["R"] = rows({"####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"})
+G["S"] = rows({".####", "#....", "#....", ".###.", "....#", "....#", "####."})
+G["T"] = rows({"#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."})
+G["U"] = rows({"#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."})
+G["V"] = rows({"#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."})
+G["W"] = rows({"#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"})
+G["X"] = rows({"#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"})
+G["Y"] = rows({"#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."})
+G["Z"] = rows({"#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"})
+G["a"] = rows({".....", ".....", ".##..", "#...#", ".####", "#...#", ".####"})
+G["b"] = rows({"#....", ".###.", "#...#", "#...#", "#...#", "#...#", ".###."})
+G["c"] = rows({".....", ".....", ".###.", "#...#", "#....", "#...#", ".###."})
+G["d"] = rows({"....#", ".####", "#...#", "#...#", "#...#", "#...#", ".####"})
+G["e"] = rows({".....", ".....", ".###.", "#...#", "#####", "#....", ".###."})
+G["f"] = rows({"..##.", ".#...", ".###.", ".#...", ".#...", ".#...", ".#..."})
+G["g"] = rows({".####", "#...#", "#...#", ".####", "....#", "#...#", ".###."})
+G["h"] = rows({"#....", "#....", "####.", "#...#", "#...#", "#...#", "#...#"})
+G["i"] = rows({"..#..", ".....", ".##..", "..#..", "..#..", "..#..", ".###."})
+G["j"] = rows({"...#.", ".....", ".###.", "...#.", "...#.", "...#.", "#..#."})
+G["k"] = rows({"#....", "#....", "#..#.", "#.#..", "##...", "#.#..", "#..#."})
+G["l"] = rows({".##..", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."})
+G["m"] = rows({".....", ".....", "##.#.", "#.#.#", "#.#.#", "#.#.#", "#.#.#"})
+G["n"] = rows({".....", ".....", "####.", "#...#", "#...#", "#...#", "#...#"})
+G["o"] = rows({".....", ".....", ".###.", "#...#", "#...#", "#...#", ".###."})
+G["p"] = rows({".....", "###..", "#...#", "#...#", "####.", "#....", "#...."})
+G["q"] = rows({".....", ".###.", "#...#", "#...#", "#...#", ".####", "....#"})
+G["r"] = rows({".....", "..##.", "#.#..", "#....", "#....", "#....", "#...."})
+G["s"] = rows({".....", ".....", ".####", "#....", ".###.", "....#", "####."})
+G["t"] = rows({".#...", ".#...", ".###.", ".#...", ".#...", ".#...", "..##."})
+G["u"] = rows({".....", ".....", "#...#", "#...#", "#...#", "#...#", ".####"})
+G["v"] = rows({".....", ".....", "#...#", "#...#", "#...#", ".#.#.", "..#.."})
+G["w"] = rows({".....", ".....", "#...#", "#.#.#", "#.#.#", "#.#.#", ".#.#."})
+G["x"] = rows({".....", ".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#"})
+G["y"] = rows({".....", "#...#", "#...#", ".####", "....#", "#...#", ".###."})
+G["z"] = rows({".....", ".....", "#####", "...#.", "..#..", ".#...", "#####"})
+G["0"] = rows({".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."})
+G["1"] = rows({"..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."})
+G["2"] = rows({".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"})
+G["3"] = rows({"#####", "....#", "...#.", "..##.", "....#", "#...#", ".###."})
+G["4"] = rows({"...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."})
+G["5"] = rows({"#####", "#....", "####.", "....#", "....#", "#...#", ".###."})
+G["6"] = rows({"..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."})
+G["7"] = rows({"#####", "....#", "...#.", "..#..", "..#..", "..#..", "..#.."})
+G["8"] = rows({".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."})
+G["9"] = rows({".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."})
+G[" "] = rows({".....", ".....", ".....", ".....", ".....", ".....", "....."})
+G["."] = rows({".....", ".....", ".....", ".....", ".....", "..#..", "..#.."})
+G[","] = rows({".....", ".....", ".....", ".....", "..#..", "..#..", ".#..."})
+G["!"] = rows({"..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."})
+G["?"] = rows({".###.", "#...#", "...#.", "..#..", "..#..", ".....", "..#.."})
+G[":"] = rows({".....", "..#..", "..#..", ".....", "..#..", "..#..", "....."})
+G[";"] = rows({".....", "..#..", "..#..", ".....", "..#..", "..#..", ".#..."})
+G["'"] = rows({"..#..", "..#..", ".....", ".....", ".....", ".....", "....."})
+G['"'] = rows({".#.#.", ".#.#.", ".....", ".....", ".....", ".....", "....."})
+G["-"] = rows({".....", ".....", ".....", "#####", ".....", ".....", "....."})
+G["_"] = rows({".....", ".....", ".....", ".....", ".....", ".....", "#####"})
+G["/"] = rows({"....#", "....#", "...#.", "..#..", ".#...", "#....", "#...."})
+G["\\"] = rows({"#....", "#....", ".#...", "..#..", "...#.", "....#", "....#"})
+G["+"] = rows({".....", "..#..", "..#..", "#####", "..#..", "..#..", "....."})
+G["="] = rows({".....", ".....", "#####", ".....", "#####", ".....", "....."})
+G["<"] = rows({"...#.", "..#..", ".#...", "#....", ".#...", "..#..", "...#."})
+G[">"] = rows({".#...", "..#..", "...#.", "....#", "...#.", "..#..", ".#..."})
+G["("] = rows({"...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."})
+G[")"] = rows({".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."})
+G["["] = rows({"..###", "..#..", "..#..", "..#..", "..#..", "..#..", "..###"})
+G["]"] = rows({"###..", "..#..", "..#..", "..#..", "..#..", "..#..", "###.."})
+G["{"] = rows({"...#.", "..#..", "..#..", ".#...", "..#..", "..#..", "...#."})
+G["}"] = rows({".#...", "..#..", "..#..", "...#.", "..#..", "..#..", ".#..."})
+G["|"] = rows({"..#..", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."})
+G["#"] = rows({".#.#.", "#####", ".#.#.", "#####", ".#.#.", ".....", "....."})
+G["@"] = rows({".###.", "#...#", "#..##", "#.#.#", "#..##", "#....", ".###."})
+G["&"] = rows({".#...", "#.#..", "#.#..", ".#...", "#.#..", "#.#..", ".#.#."})
+G["$"] = rows({"..#..", ".####", "#..#.", "#....", ".###.", "...#.", "####."})
+G["%"] = rows({"#...#", "#...#", "...#.", "..#..", ".#...", "#...#", "#...#"})
+G["*"] = rows({".....", "#.#..", ".###.", "..#..", ".###.", "#.#..", "....."})
+G["^"] = rows({".#...", "#.#..", "#...#", ".....", ".....", ".....", "....."})
+G["~"] = rows({".....", ".....", ".#...", "#.#.#", "...#.", ".....", "....."})
+G["`"] = rows({".#...", "..#..", ".....", ".....", ".....", ".....", "....."})
+G["?"] = rows({".###.", "#...#", "...#.", "..#..", "..#..", ".....", "..#.."})
 
--- UI Colors (ComputerCraft 16-color palette: 0-15)
-local ccColors = {
-    background = colors.black,
-    primary = colors.lightBlue,
-    secondary = colors.gray,
-    text = colors.white,
-    muted = colors.lightGray,
-    accent = colors.yellow
+local P = {
+    bg = 16, panel = 17, head = 18, bd = 19, white = 20, dim = 21,
+    accent = 22, ai = 23, sys = 24, ok = 25, err = 26, input = 27, inbd = 28, cur = 29
+}
+local PAL = {
+    {16, 11, 14, 22}, {17, 17, 24, 39}, {18, 21, 30, 51}, {19, 36, 52, 84},
+    {20, 220, 233, 247}, {21, 94, 113, 145}, {22, 50, 224, 255}, {23, 168, 232, 255},
+    {24, 122, 141, 176}, {25, 59, 224, 139}, {26, 255, 92, 104}, {27, 13, 20, 36},
+    {28, 44, 69, 112}, {29, 50, 224, 255}
 }
 
--- Draw border function
-local function drawBorder(height, title)
-    local promptLine = height - 1
-    term.setBackgroundColor(ccColors.background)
-    term.clear()
+local gw, gh = 1, 1
+local gfx = false
+local function initGfx()
+    local ok = pcall(function()
+        term.setGraphicsMode(2)
+        if term.getGraphicsMode() ~= 2 then error("no gfx") end
+        gw, gh = term.getSize(true)
+        for i = 1, #PAL do
+            local e = PAL[i]
+            term.setPaletteColour(e[1], e[2] / 255, e[3] / 255, e[4] / 255)
+        end
+    end)
+    if ok then gfx = true end
+end
 
-    local status = "OFFLINE"
-    local statusColor = colors.red
-    if connected then
-        status = "ONLINE"
-        statusColor = colors.green
+local function rect(x, y, w, h, c)
+    pcall(term.drawPixels, x, y, c, w, h)
+end
+
+local function textRow(g, r, fg, bg)
+    local row = G[g] and G[g][r] or G["?"][r]
+    local t = {}
+    for i = 1, 5 do
+        t[i] = row:sub(i, i) == "#" and fg or bg
     end
+    return table.concat(t)
+end
 
-    term.setTextColor(ccColors.primary)
-    term.setCursorPos(1, 1)
-    write("== " .. title .. " ==")
-
-    term.setTextColor(statusColor)
-    term.setCursorPos(1, 2)
-    if connected then
-        write("[ONLINE] HOST.PY")
-    elseif lastError then
-        write("[OFFLINE] " .. string.sub(lastError, 1, 37))
-    else
-        write("[OFFLINE] HOST.PY")
-    end
-
-    local y = 3
-    local maxLines = promptLine - 1
-    local start = math.max(1, #conversation - (maxLines - y))
-    for i = start, #conversation do
-        local line = conversation[i]
-        if line then
-            term.setCursorPos(2, y)
-            local display = string.sub(line, 1, 37)
-            write(display)
-            y = y + 1
-            if y > maxLines then break end
+local function drawText(px, py, s, fg, bg)
+    if #s == 0 then return end
+    local rows = { "", "", "", "", "", "", "" }
+    for i = 1, #s do
+        local g = G[s:sub(i, i)] or G["?"]
+        for r = 1, 7 do
+            rows[r] = rows[r] .. textRow(g, r, fg, bg)
         end
     end
-
-    term.setCursorPos(1, promptLine)
-    term.setBackgroundColor(ccColors.secondary)
-    term.clearLine()
-    term.setTextColor(ccColors.text)
-    write("> ")
+    pcall(term.drawPixels, px, py, rows)
 end
 
--- Add message to conversation
-local function addMessage(text, isUser)
-    local prefix = isUser and "You" or "Jarvis"
-    table.insert(conversation, "[" .. prefix .. "] " .. text)
-    if #conversation > 50 then
-        table.remove(conversation, 1)
-    end
-end
+local buf = {}
+local online = false
+local nodeCount = 0
+local sc = 0
+local input = ""
+local thinkingTag = "GENERATING..."
 
--- Test connection to Host.py through the tunnel
-local function testConnection()
-    local ok, err = pcall(function()
-        local response = http.get(TUNNEL_URL .. "/status")
-        if response then
-            local body = response.readAll()
-            response.close()
-            connected = string.find(body, "ok", 1, true) ~= nil
+local CPL = 48
+local VIS = 16
+
+local function wrap(text, lim)
+    local out = {}
+    local cur = ""
+    for w in (text .. " "):gmatch("%S+") do
+        if #cur + #w + 1 > lim then
+            if cur ~= "" then
+                table.insert(out, cur:sub(1, -2))
+                cur = ""
+            end
+            while #w > lim do
+                table.insert(out, w:sub(1, lim))
+                w = w:sub(lim + 1)
+            end
+            if #w > 0 then cur = w .. " " end
         else
-            connected = false
+            cur = cur .. w .. " "
         end
-    end)
-    if not ok then
-        connected = false
-        lastError = tostring(err)
+    end
+    if cur ~= "" then table.insert(out, cur:sub(1, -2)) end
+    if #out == 0 then out = { "" } end
+    return out
+end
+
+local function addMsg(fg, text)
+    local lines = wrap(text, CPL)
+    for i = 1, #lines do
+        table.insert(buf, { fg = fg, txt = lines[i] })
+    end
+    sc = math.max(0, #buf - VIS)
+end
+
+local function popThinking()
+    for i = #buf, 1, -1 do
+        if buf[i].txt == thinkingTag then
+            table.remove(buf, i)
+        end
+    end
+end
+
+local function char(idx)
+    return string.char(idx)
+end
+
+local cW = char(P.white)
+local function render()
+    term.setFrozen(true)
+    rect(0, 0, gw, gh, P.bg)
+    rect(0, 0, gw, 16, P.head)
+    rect(0, 16, gw, 1, P.bd)
+    drawText(6, 4, "JARVIS SE AI", char(P.accent), char(P.head))
+    local stTxt = "OFFLINE"
+    local stCol = P.err
+    if online then stTxt = "ONLINE" end
+    if online then stCol = P.ok end
+    local stW = #stTxt * 6 + 8
+    rect(gw - 6 - stW, 3, stW, 10, P.bd)
+    drawText(gw - 6 - stW + 4, 4, stTxt, char(stCol), char(P.bd))
+    drawText(gw - 6 - stW - 6, 4, "NODES  " .. tostring(nodeCount), char(P.dim), char(P.head))
+    local iy = gh - 17
+    rect(0, iy, gw, 15, P.input)
+    rect(0, iy, gw, 1, P.inbd)
+    rect(0, iy + 14, gw, 1, P.inbd)
+    local n = #buf
+    local from = math.max(1, n - VIS - sc + 1)
+    local to = math.max(0, n - sc)
+    local lineNo = 0
+    for i = from, to do
+        drawText(6, 20 + lineNo * 8, buf[i].txt, char(buf[i].fg), char(P.bg))
+        lineNo = lineNo + 1
+    end
+    drawText(6, iy + 4, ">", char(P.dim), char(P.input))
+    drawText(12, iy + 4, input, cW, char(P.input))
+    if math.floor(os.epoch("utc") / 500) % 2 == 0 then
+        rect(12 + #input * 6, iy + 4, 2, 8, P.cur)
+    end
+    term.setFrozen(false)
+end
+
+local function jsonIt(t)
+    return textutils.serialiseJSON(t)
+end
+
+local function testConnection()
+    local ok, resp = pcall(http.get, TUNNEL_URL .. "/", {}, 4000)
+    if ok and resp then
+        local body = resp.readAll()
+        resp.close()
+        online = true
     else
-        lastError = nil
+        online = false
     end
-    return connected
 end
 
--- Send question to Host.py via Cloudflare tunnel
-local function sendToAI(question)
-    addMessage(question, true)
-    drawBorder(20, "Jarvis AI Interface")
-
-    addMessage("Jarvis is thinking...", false)
-
-    local success, err = pcall(function()
-        local URL = TUNNEL_URL .. "/ask"
-        local postData = textutils.serialiseJSON({question = question})
-        local headers = {
-            ["Content-Type"] = "application/json",
-            ["Content-Length"] = tostring(#postData)
-        }
-
-        local response = http.post(URL, postData, headers)
-        if response then
-            local body = response.readAll()
-            response.close()
-            local data = textutils.unserialiseJSON(body)
-
-            if #conversation > 0 then
-                conversation[#conversation] = nil
-            end
-
-            if data and data.response then
-                addMessage(data.response, false)
-                playJarvisTTS(data.response)
-                notifyWorkers(data.response)
-            else
-                addMessage("Jarvis: Sorry, no response from AI.", false)
-            end
-        end
-    end)
-
-    if not success then
-        addMessage("Jarvis: Connection error. Is Host.py running?", false)
-        if #conversation > 0 and conversation[#conversation]:find("thinking") then
-            conversation[#conversation] = nil
-        end
-    end
-
-    drawBorder(20, "Jarvis AI Interface")
-end
-
--- Play Jarvis TTS
 local function playJarvisTTS(text)
-    term.setTextColor(ccColors.accent)
-    write("[" .. os.time() .. "] ")
-    term.setTextColor(ccColors.text)
-    write("Speaking: ")
-    term.setTextColor(ccColors.accent)
-    write(text:sub(1, 20))
-    term.setTextColor(ccColors.text)
-    write("...")
+    pcall(function()
+        local ok, resp = pcall(http.post, TUNNEL_URL .. "/tts", jsonIt({ text = text }),
+            { ["Content-Type"] = "application/json" }, 3000)
+        if ok and resp then resp.close() end
+    end)
+end
 
-    local ok, err = pcall(function()
-        local speaker = peripheral.find("speaker")
-        if speaker and speaker.say then
-            speaker.say(text)
+local function fetchNodes()
+    pcall(function()
+        local ok, resp = pcall(http.get, TUNNEL_URL .. "/nodes", {}, 4000)
+        if ok and resp then
+            local body = resp.readAll()
+            resp.close()
+            local ok2, t = pcall(textutils.unserialiseJSON, body)
+            if ok2 and t then
+                if t.total then
+                    nodeCount = t.total
+                elseif type(t) == "table" then
+                    local count = 0
+                    for k, v in pairs(t) do
+                        if type(k) == "number" then count = count + 1 end
+                    end
+                    nodeCount = count
+                end
+            end
         end
     end)
+end
 
-    if not ok then
-        print("TTS: " .. text:sub(1, 30) .. (text:len() > 30 and "..." or ""))
+local function sysLine(txt)
+    addMsg(P.sys, txt)
+end
+
+local function runCommand(line)
+    local parts = {}
+    for w in line:lower():gmatch("%S+") do
+        table.insert(parts, w)
     end
-
-    local ok2, err2 = pcall(function()
-        local URL = TUNNEL_URL .. "/tts"
-        local postData = textutils.serialiseJSON({text = text})
-        local headers = {["Content-Type"] = "application/json"}
-        http.post(URL, postData, headers)
-    end)
-end
-
--- Notify all worker nodes via Cloudflare tunnel
-local function notifyWorkers(message)
-    local ok, err = pcall(function()
-        local URL = TUNNEL_URL .. "/nodes"
-        local postData = textutils.serialiseJSON({command = message, action = "notify"})
-        local headers = {["Content-Type"] = "application/json"}
-        http.post(URL, postData, headers)
-    end)
-end
-
--- Main UI loop
-local function mainLoop()
-    -- Test connection to Host.py on startup
-    addMessage("Testing connection to Host.py...", false)
-    local okConn = testConnection()
-    if okConn then
-        addMessage("Connected to Host.py via Cloudflare tunnel!", false)
-    elseif lastError then
-        addMessage("NOT connected. Error: " .. lastError, false)
+    local c = parts[1] or ""
+    if c == "/clear" then
+        buf = {}
+        sc = 0
+    elseif c == "/ping" then
+        testConnection()
+        if online then
+            sysLine("Link OK  " .. TUNNEL_URL)
+        else
+            sysLine("Host unreachable - start Host.py")
+        end
+    elseif c == "/nodes" then
+        fetchNodes()
+        sysLine("Workers connected: " .. tostring(nodeCount))
+    elseif c == "/help" then
+        sysLine("/ping /nodes /clear /help /exit /reboot")
+    elseif c == "/exit" then
+        pcall(term.setGraphicsMode, 0)
+        term.setTextColor(colors.white)
+        term.setBackgroundColor(colors.black)
+        term.clear()
+        term.setCursorPos(1, 1)
+        term.write("Jarvis powered down.")
+        os.sleep(1)
+        term.turnOff()
+    elseif c == "/reboot" then
+        os.reboot()
     else
-        addMessage("NOT connected to Host.py. Check Host.py / tunnel.", false)
+        sysLine("Unknown command: " .. c)
     end
+end
 
-    drawBorder(20, "Jarvis AI Interface")
+local function sendToAI(text)
+    addMsg(P.accent, "> " .. text)
+    addMsg(P.dim, thinkingTag)
+    render()
+    local received = false
+    local ok, resp = pcall(http.post, TUNNEL_URL .. "/ask", jsonIt({ question = text }),
+        { ["Content-Type"] = "application/json" }, 20000)
+    if ok and resp then
+        local body = resp.readAll()
+        resp.close()
+        local ok2, t = pcall(textutils.unserialiseJSON, body)
+        local answer = ok2 and t and t.response
+        if answer and answer ~= "" then
+            received = true
+            popThinking()
+            addMsg(P.ai, answer)
+            playJarvisTTS(answer)
+        end
+    end
+    if not received then
+        popThinking()
+        addMsg(P.err, "Connection error. Is Host.py running?")
+    end
+    render()
+end
 
-    while isRunning do
-        term.setCursorPos(1, 19)
-        term.setBackgroundColor(ccColors.secondary)
-        term.clearLine()
-        term.setTextColor(ccColors.muted)
-        write("> ")
-
-        local input = read()
-
-        if input and #input > 0 then
-            local cmd = input:lower():gsub("^%s*(.-)%s*$", "%1")
-
-            if cmd == "/clear" then
-                conversation = {}
-                drawBorder(20, "Jarvis AI Interface")
-            elseif cmd == "/ping" then
-                local okConn = testConnection()
-                if okConn then
-                    addMessage("PONG! Connected to Host.py.", false)
-                else
-                    addMessage("No response from Host.py. Is it running?", false)
-                end
-                drawBorder(20, "Jarvis AI Interface")
-            elseif cmd == "/nodes" then
-                local ok, err = pcall(function()
-                    local URL = TUNNEL_URL .. "/nodes"
-                    local response = http.get(URL)
-                    if response then
-                        local body = response.readAll()
-                        response.close()
-                        local data = textutils.unserialiseJSON(body)
-                        if data and data.nodes then
-                            local nodeInfo = ""
-                            for _, nodeData in pairs(data.nodes) do
-                                nodeInfo = nodeInfo .. "Node: " .. (nodeData.addr or "unknown") .. "\n"
-                            end
-                            if #nodeInfo > 0 then
-                                addMessage("Connected nodes:\n" .. nodeInfo, false)
-                            else
-                                addMessage("No connected nodes found.", false)
-                            end
-                        end
+local function mainGraphics()
+    initGfx()
+    if not gfx then return false end
+    CPL = math.floor((gw - 14) / 6)
+    VIS = math.floor((gh - 37) / 8)
+    testConnection()
+    fetchNodes()
+    sysLine("Jarvis online. Type a message or /help")
+    local running = true
+    local timer = os.startTimer(0.35)
+    while running do
+        render()
+        local ev = { os.pullEventRaw() }
+        if ev[1] == "timer" and ev[2] == timer then
+            timer = os.startTimer(0.35)
+        elseif ev[1] == "terminate" then
+            running = false
+        elseif ev[1] == "char" then
+            input = input .. ev[2]
+        elseif ev[1] == "paste" then
+            input = input .. ev[2]
+        elseif ev[1] == "key" then
+            if ev[2] == 14 then
+                input = input:sub(1, -2)
+            elseif ev[2] == 28 then
+                local txt = input
+                input = ""
+                if txt ~= "" then
+                    if txt:sub(1, 1) == "/" then
+                        runCommand(txt)
+                    else
+                        sendToAI(txt)
                     end
-                end)
-                drawBorder(20, "Jarvis AI Interface")
-            elseif cmd == "/help" then
-                addMessage("Available commands:", false)
-                addMessage("/clear - Clear conversation history", false)
-                addMessage("/ping - Test connection to Host.py", false)
-                addMessage("/nodes - Show connected worker nodes", false)
-                addMessage("/help - Show this help", false)
-                addMessage("Just type a question to ask Jarvis!", false)
-                drawBorder(20, "Jarvis AI Interface")
+                end
+            elseif ev[2] == 200 then
+                sc = math.min(sc + 1, math.max(0, #buf - VIS))
+            elseif ev[2] == 208 then
+                sc = math.max(0, sc - 1)
+            end
+        elseif ev[1] == "mouse_scroll" then
+            sc = math.min(sc + ev[2], math.max(0, #buf - VIS))
+        end
+    end
+    pcall(term.setGraphicsMode, 0)
+    return true
+end
+
+local TXTCOL = {
+    [P.accent] = colors.cyan, [P.ai] = colors.white, [P.sys] = colors.gray,
+    [P.dim] = colors.gray, [P.err] = colors.red, [P.ok] = colors.green
+}
+
+local function mainText()
+    testConnection()
+    fetchNodes()
+    CPL = term.getSize() - 4
+    VIS = 17
+    addMsg(P.accent, "Jarvis online. Type a message or /help")
+    while true do
+        term.setBackgroundColor(colors.black)
+        term.clear()
+        term.setTextColor(colors.gray)
+        term.setCursorPos(1, 1)
+        term.write("JARVIS SE  [")
+        if online then
+            term.setTextColor(colors.green)
+            term.write("ONLINE")
+        else
+            term.setTextColor(colors.red)
+            term.write("OFFLINE")
+        end
+        term.setTextColor(colors.gray)
+        term.write("]  Nodes " .. tostring(nodeCount))
+        local n = #buf
+        local from = math.max(1, n - VIS + 1)
+        local row = 2
+        for i = from, n do
+            term.setCursorPos(1, row)
+            term.setTextColor(TXTCOL[buf[i].fg] or colors.white)
+            term.write(buf[i].txt)
+            row = row + 1
+            if row > 18 then break end
+        end
+        term.setCursorPos(1, 19)
+        term.setTextColor(colors.cyan)
+        term.write("> ")
+        term.setTextColor(colors.white)
+        local line = read()
+        if line ~= "" then
+            if line:sub(1, 1) == "/" then
+                runCommand(line)
             else
-                sendToAI(input)
+                sendToAI(line)
             end
         end
     end
 end
 
--- Run main
-mainLoop()
+local ok = pcall(mainGraphics)
+if not ok or not gfx then
+    pcall(term.setGraphicsMode, 0)
+    pcall(mainText)
+end
+pcall(term.setGraphicsMode, 0)
